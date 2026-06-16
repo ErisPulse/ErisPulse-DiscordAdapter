@@ -1,0 +1,18 @@
+[project]
+name = "ErisPulse-DiscordAdapter"
+version = "4.0.0"
+description = "ErisPulse的Discord适配模块"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [ { name = "ErisPulse" } ]
+dependencies = []
+
+[project.urls]
+"homepage" = "https://github.com/ErisPulse/ErisPulse-DiscordAdapter"
+
+[project.entry-points."erispulse.adapter"]
+discord = "DiscordAdapter:DiscordAdapter"
+
+[tool.setuptools.packages.find]
+include = [ "DiscordAdapter" ]
