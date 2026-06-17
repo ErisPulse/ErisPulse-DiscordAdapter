@@ -48,7 +48,7 @@ class DiscordAccountConfig(BotAccountConfig):
     intents: int = field(
         default=DEFAULT_INTENTS,
         metadata={
-            "description": "Gateway Intents 位掩码（默认 GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281）",
+            "description": "Gateway Intents bitmask (default GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281)",
             "required": False,
             "webui": {"widget": "number", "group": "advanced", "order": 3},
         },
