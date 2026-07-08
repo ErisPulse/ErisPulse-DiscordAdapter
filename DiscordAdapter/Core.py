@@ -9,6 +9,7 @@ from ErisPulse.Core.Bases.adapter import BaseAdapter
 from ErisPulse.Core.Bases.websocket import WSMessage
 from ErisPulse.Core.Event import register_event_mixin, unregister_platform_event_methods
 from ErisPulse.runtime.config_schema import BotAccountConfig
+from ErisPulse.Core.i18n import i18n
 
 from .Converter import DiscordConverter
 
@@ -39,20 +40,36 @@ class DiscordAccountConfig(BotAccountConfig):
     token: str = field(
         default="",
         metadata={
-            "description": "Discord Bot Token",
+            "description": {"i18n": "discord.token", "default": "Discord Bot Token"},
             "required": True,
             "secret": True,
-            "webui": {"widget": "password", "group": "basic", "order": 2},
+            "ui": {
+                "widget": "password",
+                "group": "basic",
+                "order": 2,
+                "placeholder": {"i18n": "discord.token.ph", "default": "请输入 Discord Bot Token"},
+            },
         },
     )
     intents: int = field(
         default=DEFAULT_INTENTS,
         metadata={
-            "description": "Gateway Intents bitmask (default GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281)",
+            "description": {
+                "i18n": "discord.intents",
+                "default": "Gateway Intents 位掩码（默认 GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281）",
+            },
             "required": False,
-            "webui": {"widget": "number", "group": "advanced", "order": 3},
+            "ui": {"widget": "number", "group": "advanced", "order": 3},
         },
     )
+
+
+DiscordAccountConfig._schema_meta = {
+    "group_labels": {
+        "basic": {"i18n": "discord.group.basic", "default": "基本设置"},
+        "advanced": {"i18n": "discord.group.advanced", "default": "高级设置"},
+    }
+}  # type: ignore[attr-defined]
 
 
 class DiscordEventMixin:
@@ -258,6 +275,106 @@ class DiscordAdapter(BaseAdapter):
         self._running = False
         self.default_timeout = 30
         self.default_retry_interval = 5
+        self._register_i18n()
+
+    def _register_i18n(self):
+        """注册配置字段与日志消息的 i18n 翻译"""
+        try:
+            from ErisPulse.runtime.config_schema import register_config_i18n
+            register_config_i18n(DiscordAccountConfig, "zh-CN", domain="discord")
+            register_config_i18n(DiscordAccountConfig, "en", {
+                "discord.token": "Discord Bot Token",
+                "discord.token.ph": "Enter your Discord Bot Token",
+                "discord.intents": "Gateway Intents bitmask (default GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281)",
+                "discord.group.basic": "Basic",
+                "discord.group.advanced": "Advanced",
+            }, domain="discord")
+        except Exception:
+            pass
+
+        zh_CN = {
+            "discord.no_config_create_default": "未找到配置文件，创建默认账户配置",
+            "discord.save_default_failed": "保存默认账户配置失败: {error}",
+            "discord.missing_token": "Bot {name} 缺少token配置，已跳过",
+            "discord.accounts_loaded": "Discord适配器初始化完成，共加载 {count} 个机器人",
+            "discord.api_request": "账户 {name} API {method} {endpoint} → {status}",
+            "discord.api_call_failed": "账户 {name} 调用 Discord API 失败: {error}",
+            "discord.api_error": "API调用失败: {error}",
+            "discord.dm_create_failed": "创建 DM 频道失败，回退到原始 ID: {id}",
+            "discord.upload_failed": "账户 {name} 上传附件失败: {error}",
+            "discord.upload_error": "附件上传失败: {error}",
+            "discord.account_starting": "启动 Discord 账户: {name}",
+            "discord.adapter_started": "Discord适配器启动完成，共 {count} 个机器人",
+            "discord.gateway_url_failed": "获取 Gateway URL 失败: {message}",
+            "discord.ws_connected": "账户 {name} Gateway WebSocket 已连接",
+            "discord.no_hello": "未收到 HELLO 消息",
+            "discord.hello_mismatch": "期望 HELLO(op=10)，收到 op={op}",
+            "discord.reconnect_wait": "账户 {name} {seconds}秒后重连...",
+            "discord.connect_error": "账户 {name} 连接异常: {error}",
+            "discord.identify_sent": "账户 {name} 已发送 IDENTIFY",
+            "discord.resume_sent": "账户 {name} 已发送 RESUME (session={session}, seq={seq})",
+            "discord.heartbeat_sent": "账户 {name} 发送心跳 (seq={seq})",
+            "discord.heartbeat_unacked": "账户 {name} 心跳未确认，准备重连",
+            "discord.heartbeat_error": "账户 {name} 心跳异常: {error}",
+            "discord.binary_received": "账户 {name} 收到二进制数据",
+            "discord.close_received": "账户 {name} 收到 CLOSE 帧",
+            "discord.error_frame": "账户 {name} 收到 ERROR 帧",
+            "discord.listen_error": "账户 {name} 监听异常: {error}",
+            "discord.json_parse_failed": "账户 {name} JSON 解析失败: {data}",
+            "discord.resume_success": "账户 {name} RESUME 成功",
+            "discord.heartbeat_acked": "账户 {name} 收到心跳确认",
+            "discord.server_heartbeat_request": "账户 {name} 服务器请求心跳",
+            "discord.server_reconnect": "账户 {name} 服务器要求重连",
+            "discord.invalid_session": "账户 {name} 无效会话 (可恢复: {resumable})",
+            "discord.unknown_op": "账户 {name} 收到未知 op={op}",
+            "discord.ready": "账户 {name} 已就绪 (bot_id: {bot_id}, session: {session})",
+            "discord.ws_close_failed": "关闭账户 {name} WebSocket 失败: {error}",
+            "discord.adapter_shutdown": "Discord适配器已关闭",
+        }
+        en = {
+            "discord.no_config_create_default": "No config found, creating default account config",
+            "discord.save_default_failed": "Failed to save default account config: {error}",
+            "discord.missing_token": "Bot {name} missing token config, skipped",
+            "discord.accounts_loaded": "Discord adapter initialized, loaded {count} bot(s)",
+            "discord.api_request": "Account {name} API {method} {endpoint} → {status}",
+            "discord.api_call_failed": "Account {name} Discord API call failed: {error}",
+            "discord.api_error": "API call failed: {error}",
+            "discord.dm_create_failed": "Failed to create DM channel, falling back to original ID: {id}",
+            "discord.upload_failed": "Account {name} upload attachment failed: {error}",
+            "discord.upload_error": "Attachment upload failed: {error}",
+            "discord.account_starting": "Starting Discord account: {name}",
+            "discord.adapter_started": "Discord adapter started, {count} bot(s) total",
+            "discord.gateway_url_failed": "Failed to get Gateway URL: {message}",
+            "discord.ws_connected": "Account {name} Gateway WebSocket connected",
+            "discord.no_hello": "Did not receive HELLO message",
+            "discord.hello_mismatch": "Expected HELLO (op=10), got op={op}",
+            "discord.reconnect_wait": "Account {name} reconnecting in {seconds}s...",
+            "discord.connect_error": "Account {name} connection error: {error}",
+            "discord.identify_sent": "Account {name} sent IDENTIFY",
+            "discord.resume_sent": "Account {name} sent RESUME (session={session}, seq={seq})",
+            "discord.heartbeat_sent": "Account {name} sent heartbeat (seq={seq})",
+            "discord.heartbeat_unacked": "Account {name} heartbeat not acknowledged, reconnecting",
+            "discord.heartbeat_error": "Account {name} heartbeat error: {error}",
+            "discord.binary_received": "Account {name} received binary data",
+            "discord.close_received": "Account {name} received CLOSE frame",
+            "discord.error_frame": "Account {name} received ERROR frame",
+            "discord.listen_error": "Account {name} listen error: {error}",
+            "discord.json_parse_failed": "Account {name} JSON parse failed: {data}",
+            "discord.resume_success": "Account {name} RESUME success",
+            "discord.heartbeat_acked": "Account {name} received heartbeat ack",
+            "discord.server_heartbeat_request": "Account {name} server requested heartbeat",
+            "discord.server_reconnect": "Account {name} server requested reconnect",
+            "discord.invalid_session": "Account {name} invalid session (resumable: {resumable})",
+            "discord.unknown_op": "Account {name} received unknown op={op}",
+            "discord.ready": "Account {name} ready (bot_id: {bot_id}, session: {session})",
+            "discord.ws_close_failed": "Failed to close account {name} WebSocket: {error}",
+            "discord.adapter_shutdown": "Discord adapter shut down",
+        }
+        try:
+            i18n.register("zh-CN", zh_CN, domain="discord")
+            i18n.register("en", en, domain="discord")
+        except Exception:
+            pass
 
     def _get_config_key(self) -> str:
         return "DiscordAdapter"
@@ -270,7 +387,7 @@ class DiscordAdapter(BaseAdapter):
         data = config_mgr.getConfig(key)
 
         if not data:
-            self.logger.info("未找到配置文件，创建默认账户配置")
+            self.logger.info(i18n.t("discord.no_config_create_default", default="未找到配置文件，创建默认账户配置"))
             default_config = {
                 "default": {
                     "token": "",
@@ -281,7 +398,7 @@ class DiscordAdapter(BaseAdapter):
             try:
                 config_mgr.setConfig(key, default_config)
             except Exception as e:
-                self.logger.error(f"保存默认账户配置失败: {str(e)}")
+                self.logger.error(i18n.t("discord.save_default_failed", error=str(e), default="保存默认账户配置失败: {error}"))
             data = default_config
 
         accounts = {}
@@ -289,14 +406,14 @@ class DiscordAdapter(BaseAdapter):
             if not isinstance(account_data, dict):
                 continue
             if not account_data.get("token"):
-                self.logger.error(f"Bot {name} 缺少token配置，已跳过")
+                self.logger.error(i18n.t("discord.missing_token", name=name, default="Bot {name} 缺少token配置，已跳过"))
                 continue
 
             instance = dict_to_dataclass(DiscordAccountConfig, account_data)
             instance.name = name
             accounts[name] = instance
 
-        self.logger.info(f"Discord适配器初始化完成，共加载 {len(accounts)} 个机器人")
+        self.logger.info(i18n.t("discord.accounts_loaded", count=len(accounts), default="Discord适配器初始化完成，共加载 {count} 个机器人"))
         return accounts
 
     # ==================== REST API ====================
@@ -336,7 +453,7 @@ class DiscordAdapter(BaseAdapter):
             except Exception:
                 raw_response = {}
 
-            self.logger.debug(f"账户 {account_name} API {method} {endpoint} → {status}")
+            self.logger.debug(i18n.t("discord.api_request", name=account_name, method=method, endpoint=endpoint, status=status, default="账户 {name} API {method} {endpoint} → {status}"))
 
             is_ok = 200 <= status < 300
             message_id = ""
@@ -359,10 +476,10 @@ class DiscordAdapter(BaseAdapter):
             return result
 
         except Exception as e:
-            self.logger.error(f"账户 {account_name} 调用 Discord API 失败: {str(e)}")
+            self.logger.error(i18n.t("discord.api_call_failed", name=account_name, error=str(e), default="账户 {name} 调用 Discord API 失败: {error}"))
             return self.make_error(
                 retcode=33001,
-                message=f"API调用失败: {str(e)}",
+                message=i18n.t("discord.api_error", error=str(e), default="API调用失败: {error}"),
                 raw=None,
             )
 
@@ -390,7 +507,7 @@ class DiscordAdapter(BaseAdapter):
                 self._dm_channels[cache_key] = channel_id
                 return channel_id
 
-        self.logger.warning(f"创建 DM 频道失败，回退到原始 ID: {target_id}")
+        self.logger.warning(i18n.t("discord.dm_create_failed", id=target_id, default="创建 DM 频道失败，回退到原始 ID: {id}"))
         return str(target_id)
 
     async def _send_segments(
@@ -515,10 +632,10 @@ class DiscordAdapter(BaseAdapter):
             result["discord_raw"] = raw_response
             return result
         except Exception as e:
-            self.logger.error(f"账户 {account_name} 上传附件失败: {str(e)}")
+            self.logger.error(i18n.t("discord.upload_failed", name=account_name, error=str(e), default="账户 {name} 上传附件失败: {error}"))
             return self.make_error(
                 retcode=33001,
-                message=f"附件上传失败: {str(e)}",
+                message=i18n.t("discord.upload_error", error=str(e), default="附件上传失败: {error}"),
                 raw=None,
             )
 
@@ -526,6 +643,8 @@ class DiscordAdapter(BaseAdapter):
 
     async def start(self):
         self._running = True
+        # 刷新账户缓存，确保 _resolve_account 能找到 Dashboard 配置的账户
+        self._accounts_data = self.accounts
 
         for account_name, account in self.enabled_accounts.items():
             converter = DiscordConverter()
@@ -543,10 +662,10 @@ class DiscordAdapter(BaseAdapter):
             self._connect_tasks[account_name] = asyncio.create_task(
                 self._connect_account(account_name)
             )
-            self.logger.info(f"启动 Discord 账户: {account_name}")
+            self.logger.info(i18n.t("discord.account_starting", name=account_name, default="启动 Discord 账户: {name}"))
 
         self.logger.info(
-            f"Discord适配器启动完成，共 {len(self.enabled_accounts)} 个机器人"
+            i18n.t("discord.adapter_started", count=len(self.enabled_accounts), default="Discord适配器启动完成，共 {count} 个机器人")
         )
 
     async def _connect_account(self, account_name: str):
@@ -559,7 +678,7 @@ class DiscordAdapter(BaseAdapter):
                 # 获取 Gateway URL
                 gw = await self.call_api("/gateway/bot", _account_id=account_name)
                 if gw.get("status") != "ok":
-                    raise ConnectionError(f"获取 Gateway URL 失败: {gw.get('message')}")
+                    raise ConnectionError(i18n.t("discord.gateway_url_failed", message=gw.get('message'), default="获取 Gateway URL 失败: {message}"))
                 gw_data = gw.get("data", {})
                 gw_url = gw_data.get("url", "wss://gateway.discord.gg")
                 gw_url = gw_url.split("?")[0]
@@ -574,17 +693,17 @@ class DiscordAdapter(BaseAdapter):
                 ws = await client.ws_connect(ws_url)
                 state["ws"] = ws
                 self._runtime_state[account_name] = state
-                self.logger.info(f"账户 {account_name} Gateway WebSocket 已连接")
+                self.logger.info(i18n.t("discord.ws_connected", name=account_name, default="账户 {name} Gateway WebSocket 已连接"))
 
                 # 接收 HELLO
                 msg = await ws.receive()
                 if msg.type != WSMessage.TEXT:
-                    raise ConnectionError("未收到 HELLO 消息")
+                    raise ConnectionError(i18n.t("discord.no_hello", default="未收到 HELLO 消息"))
 
                 hello = json.loads(msg.data)
                 if hello.get("op") != OP_HELLO:
                     raise ConnectionError(
-                        f"期望 HELLO(op=10)，收到 op={hello.get('op')}"
+                        i18n.t("discord.hello_mismatch", op=hello.get('op'), default="期望 HELLO(op=10)，收到 op={op}")
                     )
 
                 heartbeat_interval = (
@@ -619,7 +738,7 @@ class DiscordAdapter(BaseAdapter):
                     return
 
                 self.logger.info(
-                    f"账户 {account_name} {self.default_retry_interval}秒后重连..."
+                    i18n.t("discord.reconnect_wait", name=account_name, seconds=self.default_retry_interval, default="账户 {name} {seconds}秒后重连...")
                 )
                 await asyncio.sleep(self.default_retry_interval)
 
@@ -627,7 +746,7 @@ class DiscordAdapter(BaseAdapter):
                 raise
             except Exception as e:
                 self.logger.error(
-                    f"账户 {account_name} 连接异常: {str(e)}",
+                    i18n.t("discord.connect_error", name=account_name, error=str(e), default="账户 {name} 连接异常: {error}"),
                     exc_info=True,
                 )
                 if not self._running:
@@ -651,7 +770,7 @@ class DiscordAdapter(BaseAdapter):
             },
         }
         await ws.send_text(json.dumps(identify_payload))
-        self.logger.info(f"账户 {account_name} 已发送 IDENTIFY")
+        self.logger.info(i18n.t("discord.identify_sent", name=account_name, default="账户 {name} 已发送 IDENTIFY"))
 
     async def _resume(self, account_name: str, account: DiscordAccountConfig):
         state = self._runtime_state[account_name]
@@ -667,8 +786,13 @@ class DiscordAdapter(BaseAdapter):
         }
         await ws.send_text(json.dumps(resume_payload))
         self.logger.info(
-            f"账户 {account_name} 已发送 RESUME "
-            f"(session={state['session_id']}, seq={state['seq']})"
+            i18n.t(
+                "discord.resume_sent",
+                name=account_name,
+                session=state["session_id"],
+                seq=state["seq"],
+                default="账户 {name} 已发送 RESUME (session={session}, seq={seq})",
+            )
         )
 
     async def _heartbeat(self, account_name: str, interval: float):
@@ -686,12 +810,12 @@ class DiscordAdapter(BaseAdapter):
                 state["heartbeat_ack"] = False
                 seq = state.get("seq")
                 await ws.send_text(json.dumps({"op": OP_HEARTBEAT, "d": seq}))
-                self.logger.debug(f"账户 {account_name} 发送心跳 (seq={seq})")
+                self.logger.debug(i18n.t("discord.heartbeat_sent", name=account_name, seq=seq, default="账户 {name} 发送心跳 (seq={seq})"))
 
                 await asyncio.sleep(interval)
 
                 if not state.get("heartbeat_ack"):
-                    self.logger.warning(f"账户 {account_name} 心跳未确认，准备重连")
+                    self.logger.warning(i18n.t("discord.heartbeat_unacked", name=account_name, default="账户 {name} 心跳未确认，准备重连"))
                     if ws and not (hasattr(ws, "closed") and ws.closed):
                         try:
                             await ws.close()
@@ -702,7 +826,7 @@ class DiscordAdapter(BaseAdapter):
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                self.logger.error(f"账户 {account_name} 心跳异常: {str(e)}")
+                self.logger.error(i18n.t("discord.heartbeat_error", name=account_name, error=str(e), default="账户 {name} 心跳异常: {error}"))
                 return
 
     async def _listen(self, account_name: str):
@@ -717,16 +841,16 @@ class DiscordAdapter(BaseAdapter):
                 if msg.type == WSMessage.TEXT:
                     await self._handle_gateway_message(account_name, msg.data)
                 elif msg.type == WSMessage.BINARY:
-                    self.logger.debug(f"账户 {account_name} 收到二进制数据")
+                    self.logger.debug(i18n.t("discord.binary_received", name=account_name, default="账户 {name} 收到二进制数据"))
                 elif msg.type == WSMessage.CLOSE:
-                    self.logger.info(f"账户 {account_name} 收到 CLOSE 帧")
+                    self.logger.info(i18n.t("discord.close_received", name=account_name, default="账户 {name} 收到 CLOSE 帧"))
                     break
                 elif msg.type == WSMessage.ERROR:
-                    self.logger.error(f"账户 {account_name} 收到 ERROR 帧")
+                    self.logger.error(i18n.t("discord.error_frame", name=account_name, default="账户 {name} 收到 ERROR 帧"))
                     break
         except Exception as e:
             self.logger.error(
-                f"账户 {account_name} 监听异常: {str(e)}",
+                i18n.t("discord.listen_error", name=account_name, error=str(e), default="账户 {name} 监听异常: {error}"),
                 exc_info=True,
             )
         finally:
@@ -743,7 +867,7 @@ class DiscordAdapter(BaseAdapter):
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
-            self.logger.error(f"账户 {account_name} JSON 解析失败: {raw_data[:200]}")
+            self.logger.error(i18n.t("discord.json_parse_failed", name=account_name, data=raw_data[:200], default="账户 {name} JSON 解析失败: {data}"))
             return
 
         op = data.get("op")
@@ -761,23 +885,23 @@ class DiscordAdapter(BaseAdapter):
                 return
 
             if event_name == "RESUMED":
-                self.logger.info(f"账户 {account_name} RESUME 成功")
+                self.logger.info(i18n.t("discord.resume_success", name=account_name, default="账户 {name} RESUME 成功"))
                 return
 
             await self._handle_dispatch(account_name, event_name, payload)
 
         elif op == OP_HEARTBEAT_ACK:
             state["heartbeat_ack"] = True
-            self.logger.debug(f"账户 {account_name} 收到心跳确认")
+            self.logger.debug(i18n.t("discord.heartbeat_acked", name=account_name, default="账户 {name} 收到心跳确认"))
 
         elif op == OP_HEARTBEAT:
             seq = state.get("seq")
             if ws:
                 await ws.send_text(json.dumps({"op": OP_HEARTBEAT, "d": seq}))
-            self.logger.debug(f"账户 {account_name} 服务器请求心跳")
+            self.logger.debug(i18n.t("discord.server_heartbeat_request", name=account_name, default="账户 {name} 服务器请求心跳"))
 
         elif op == OP_RECONNECT:
-            self.logger.info(f"账户 {account_name} 服务器要求重连")
+            self.logger.info(i18n.t("discord.server_reconnect", name=account_name, default="账户 {name} 服务器要求重连"))
             if ws and not (hasattr(ws, "closed") and ws.closed):
                 try:
                     await ws.close()
@@ -786,7 +910,7 @@ class DiscordAdapter(BaseAdapter):
 
         elif op == OP_INVALID_SESSION:
             resumable = data.get("d")
-            self.logger.warning(f"账户 {account_name} 无效会话 (可恢复: {resumable})")
+            self.logger.warning(i18n.t("discord.invalid_session", name=account_name, resumable=resumable, default="账户 {name} 无效会话 (可恢复: {resumable})"))
             if not resumable:
                 state["session_id"] = None
                 state["seq"] = None
@@ -798,7 +922,7 @@ class DiscordAdapter(BaseAdapter):
                     pass
 
         else:
-            self.logger.debug(f"账户 {account_name} 收到未知 op={op}")
+            self.logger.debug(i18n.t("discord.unknown_op", name=account_name, op=op, default="账户 {name} 收到未知 op={op}"))
 
     async def _handle_ready(self, account_name: str, payload: dict):
         state = self._runtime_state.get(account_name, {})
@@ -818,7 +942,13 @@ class DiscordAdapter(BaseAdapter):
 
         await self.emit_meta("connect", bot_id)
         self.logger.info(
-            f"账户 {account_name} 已就绪 (bot_id: {bot_id}, session: {session_id})"
+            i18n.t(
+                "discord.ready",
+                name=account_name,
+                bot_id=bot_id,
+                session=session_id,
+                default="账户 {name} 已就绪 (bot_id: {bot_id}, session: {session})",
+            )
         )
 
     async def _handle_dispatch(self, account_name: str, event_name: str, data: dict):
@@ -858,7 +988,7 @@ class DiscordAdapter(BaseAdapter):
                     await ws.close()
                 except Exception as e:
                     self.logger.error(
-                        f"关闭账户 {account_name} WebSocket 失败: {str(e)}"
+                        i18n.t("discord.ws_close_failed", name=account_name, error=str(e), default="关闭账户 {name} WebSocket 失败: {error}")
                     )
 
             try:
@@ -875,4 +1005,4 @@ class DiscordAdapter(BaseAdapter):
         except Exception:
             pass
 
-        self.logger.info("Discord适配器已关闭")
+        self.logger.info(i18n.t("discord.adapter_shutdown", default="Discord适配器已关闭"))
