@@ -1,6 +1,25 @@
-# ErisPulse Discord Adapter
+<div align="center">
 
-[English](#english) | [中文](#中文)
+<img src=".github/assets/ErisPulseLogo.png" width="180" alt="ErisPulse DiscordAdapter" />
+
+# ErisPulse DiscordAdapter
+
+**Discord Bot adapter — Gateway WebSocket + REST API v10, multi-account.**
+
+A Discord Bot adapter for the ErisPulse framework. It implements the full Gateway flow (HELLO / IDENTIFY / Heartbeat / RESUME) with auto-reconnect, and exposes the complete Discord HTTP API v10 — supporting embeds, file uploads, DMs, threads and platform-specific events.
+
+<p>
+  <a href="https://pypi.org/project/ErisPulse-DiscordAdapter/"><img src="https://img.shields.io/pypi/v/ErisPulse-DiscordAdapter?style=for-the-badge&logo=pypi&logoColor=white" alt="PyPI"></a>
+  <a href="https://pypi.org/project/ErisPulse-DiscordAdapter/"><img src="https://img.shields.io/badge/Python-3.10+-FFD43B?style=for-the-badge&logo=python&logoColor=blue" alt="Python"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License"></a>
+  <a href="https://github.com/ErisPulse/ErisPulse-DiscordAdapter"><img src="https://img.shields.io/github/stars/ErisPulse/ErisPulse-DiscordAdapter?style=for-the-badge&logo=github&color=brightgreen" alt="Stars"></a>
+  <a href="https://pepy.tech/project/ErisPulse-DiscordAdapter"><img src="https://img.shields.io/pepy/dt/ErisPulse-DiscordAdapter?style=for-the-badge&color=blue" alt="Downloads"></a>
+  <a href="https://github.com/ErisPulse/ErisPulse"><img src="https://img.shields.io/badge/Powered_by-ErisPulse-FF6B9D?style=for-the-badge&logo=bookstack&logoColor=white" alt="ErisPulse"></a>
+</p>
+
+[English](#english) | [简体中文](#中文)
+
+</div>
 
 ---
 
