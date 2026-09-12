@@ -7,11 +7,21 @@ from typing import Dict, List, Optional, Union
 from ErisPulse.Core import client
 from ErisPulse.Core.Bases.adapter import BaseAdapter
 from ErisPulse.Core.Bases.websocket import WSMessage
+from ErisPulse.Core.Bases import BotAccountConfig
 from ErisPulse.Core.Event import register_event_mixin, unregister_platform_event_methods
-from ErisPulse.runtime.config_schema import BotAccountConfig
 from ErisPulse.Core.i18n import i18n
 
 from .Converter import DiscordConverter
+
+try:
+    from ErisPulse.runtime.tasks import spawn_background
+except ImportError:  # pragma: no cover
+    spawn_background = None
+
+__version__ = "4.2.0"
+
+# 软依赖的框架最低版本（运行时检测，仅提示不强制）
+MIN_FRAMEWORK_VERSION = (2, 7, 1)
 
 # Gateway Intents
 INTENT_GUILDS = 1 << 0
@@ -119,6 +129,158 @@ class DiscordAdapter(BaseAdapter):
     """Discord 适配器，支持多账户 Gateway WebSocket + REST API"""
 
     AccountConfigClass = DiscordAccountConfig
+
+    # ==================== Api DSL ====================
+
+    class Api(BaseAdapter.Api):
+        """Discord 标准 API 动作实现（ApiDSL）
+
+        {!--< tips >!--}
+        1. get_self_info → GET /users/@me
+        2. get_user_info → GET /users/{id}
+        3. get_guild_info → GET /guilds/{id}?with_counts=true
+        4. get_guild_list → GET /users/@me/guilds
+        5. get_channel_info → GET /channels/{id}；get_channel_list → GET /guilds/{id}/channels
+        6. delete_message → DELETE /channels/{ch}/messages/{mid}（登记表补全 channel_id）
+        7. leave_guild → DELETE /users/@me/guilds/{gid}
+        {!--< /tips >!--}
+        """
+
+        async def get_self_info(self) -> dict:
+            r = await self._adapter.call_api("/users/@me", _account_id=self._account_id)
+            if r.get("status") != "ok":
+                return r
+            u = r.get("data") or {}
+            r["data"] = {
+                "user_id": str(u.get("id", "")),
+                "user_name": u.get("username", ""),
+                "user_displayname": u.get("global_name") or u.get("username", ""),
+                "bot": bool(u.get("bot", False)),
+            }
+            return r
+
+        async def get_user_info(self, user_id: str) -> dict:
+            r = await self._adapter.call_api(
+                f"/users/{user_id}", _account_id=self._account_id
+            )
+            if r.get("status") != "ok":
+                return r
+            u = r.get("data") or {}
+            r["data"] = {
+                "user_id": str(u.get("id", user_id)),
+                "user_name": u.get("username", ""),
+                "user_displayname": u.get("global_name") or u.get("username", ""),
+                "bot": bool(u.get("bot", False)),
+            }
+            return r
+
+        async def get_guild_info(self, guild_id: str) -> dict:
+            r = await self._adapter.call_api(
+                f"/guilds/{guild_id}", _account_id=self._account_id,
+                method="GET", with_counts="true",
+            )
+            if r.get("status") != "ok":
+                return r
+            g = r.get("data") or {}
+            r["data"] = {
+                "group_id": str(g.get("id", guild_id)),
+                "group_name": g.get("name", ""),
+                "group_member_count": g.get("approximate_member_count", 0),
+            }
+            return r
+
+        async def get_guild_list(self) -> dict:
+            r = await self._adapter.call_api(
+                "/users/@me/guilds", _account_id=self._account_id
+            )
+            if r.get("status") != "ok":
+                return r
+            items = r.get("data") or []
+            r["data"] = [
+                {"group_id": str(g.get("id", "")), "group_name": g.get("name", "")}
+                for g in items
+                if isinstance(g, dict)
+            ]
+            return r
+
+        async def get_channel_info(self, channel_id: str) -> dict:
+            r = await self._adapter.call_api(
+                f"/channels/{channel_id}", _account_id=self._account_id
+            )
+            if r.get("status") != "ok":
+                return r
+            c = r.get("data") or {}
+            r["data"] = {
+                "channel_id": str(c.get("id", channel_id)),
+                "channel_name": c.get("name", ""),
+                "guild_id": str(c.get("guild_id", "")),
+            }
+            return r
+
+        async def get_channel_list(self, guild_id: str) -> dict:
+            r = await self._adapter.call_api(
+                f"/guilds/{guild_id}/channels", _account_id=self._account_id
+            )
+            if r.get("status") != "ok":
+                return r
+            items = r.get("data") or []
+            r["data"] = [
+                {"channel_id": str(c.get("id", "")), "channel_name": c.get("name", "")}
+                for c in items
+                if isinstance(c, dict)
+            ]
+            return r
+
+        async def get_guild_member_info(self, guild_id: str, user_id: str) -> dict:
+            r = await self._adapter.call_api(
+                f"/guilds/{guild_id}/members/{user_id}", _account_id=self._account_id
+            )
+            if r.get("status") != "ok":
+                return r
+            m = r.get("data") or {}
+            u = m.get("user", {}) or {}
+            r["data"] = {
+                "user_id": str(u.get("id", user_id)),
+                "user_name": u.get("username", ""),
+                "user_displayname": m.get("nick") or u.get("global_name") or u.get("username", ""),
+                "discord_roles": [str(x) for x in m.get("roles", [])],
+            }
+            return r
+
+        async def delete_message(self, message_id: str) -> dict:
+            return await self._adapter._delete_message_by_id(str(message_id), account_id=self._account_id)
+
+        async def leave_guild(self, guild_id: str) -> dict:
+            return await self._adapter.call_api(
+                f"/users/@me/guilds/{guild_id}", _account_id=self._account_id,
+                method="DELETE",
+            )
+
+        async def get_status(self) -> dict:
+            ad = self._adapter
+            bots = []
+            for name, state in ad._runtime_state.items():
+                bots.append({
+                    "self": {"platform": ad.platform, "user_id": state.get("bot_id", ""), "account_id": name},
+                    "online": bool(state.get("ws") is not None),
+                })
+            return ad.make_response(data={"good": any(b["online"] for b in bots), "bots": bots})
+
+        async def get_version(self) -> dict:
+            from . import __version__
+
+            return self._adapter.make_response(
+                data={"impl": "ErisPulse-DiscordAdapter", "version": __version__, "onebot_version": "12"}
+            )
+
+        async def get_supported_actions(self) -> dict:
+            actions = {
+                "get_self_info", "get_user_info", "get_guild_info", "get_guild_list",
+                "get_channel_info", "get_channel_list", "get_guild_member_info",
+                "delete_message", "leave_guild", "get_status", "get_version",
+                "get_supported_actions",
+            }
+            return self._adapter.make_response(data=sorted(actions))
 
     class Send(BaseAdapter.Send):
         def __init__(self, adapter, target_type=None, target_id=None, account_id=None):
@@ -228,9 +390,18 @@ class DiscordAdapter(BaseAdapter):
 
             return asyncio.create_task(_send())
 
+        _keyboard_rows = None
+
         def Raw_ob12(self, message: Union[Dict, List[Dict]], **kwargs):
             if isinstance(message, dict):
                 message = [message]
+
+            # Keyboard() 修饰器暂存的通用 rows → 标准 keyboard 段
+            if self._keyboard_rows is not None:
+                message = list(message) + [
+                    {"type": "keyboard", "data": {"rows": self._keyboard_rows}}
+                ]
+                self._keyboard_rows = None
 
             ctx = self.send_context
 
@@ -244,6 +415,20 @@ class DiscordAdapter(BaseAdapter):
                 )
 
             return asyncio.create_task(_send())
+
+        def Keyboard(self, rows):
+            """
+            附加按钮/组件（跨平台交互组件标准）
+
+            :param rows: 通用标准结构 [[{"label": "..", "type": "callback|link", "data": ".."}]]
+            :return: Send 实例，支持链式调用
+
+            :example:
+            >>> rows = [[{"label": "点击", "type": "callback", "data": "btn:1"}]]
+            >>> await discord.Send.To("channel", cid).Keyboard(rows).Text("请选择")
+            """
+            self._keyboard_rows = rows
+            return self
 
         def Raw_json(self, json_str: str):
             data = json.loads(json_str)
@@ -272,10 +457,43 @@ class DiscordAdapter(BaseAdapter):
         self._converters: Dict[str, DiscordConverter] = {}
         self._connect_tasks: Dict[str, asyncio.Task] = {}
         self._dm_channels: Dict[str, str] = {}
+        self._message_targets: Dict[str, str] = {}
         self._running = False
         self.default_timeout = 30
         self.default_retry_interval = 5
         self._register_i18n()
+        self._check_framework_version()
+        self._get_logger().info(f"DiscordAdapter v{__version__} 已加载")
+
+    @staticmethod
+    def _parse_version(version_str: str) -> tuple:
+        """解析版本号为可比较的三元组（忽略 dev/预发布后缀，如 2.8.0-dev.3 → (2, 8, 0)）"""
+        parts = []
+        for piece in str(version_str).split("."):
+            digits = "".join(ch for ch in piece if ch.isdigit())
+            parts.append(int(digits) if digits else 0)
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+
+    def _check_framework_version(self):
+        """软依赖检测：框架版本过低时打警告（不阻断加载）"""
+        try:
+            from importlib.metadata import version as _pkg_version
+
+            raw = _pkg_version("ErisPulse")
+        except Exception:
+            return
+        try:
+            if self._parse_version(raw) < MIN_FRAMEWORK_VERSION:
+                self._get_logger().warning(
+                    f"当前 ErisPulse 版本 {raw} 过低：DiscordAdapter v{__version__} 需要 >= "
+                    f"{'.'.join(map(str, MIN_FRAMEWORK_VERSION))}"
+                    "（BaseConverter / Api DSL / spawn_background 等特性），"
+                    "部分功能可能不可用，建议升级框架"
+                )
+        except Exception:
+            pass
 
     def _register_i18n(self):
         """注册配置字段与日志消息的 i18n 翻译"""
@@ -379,44 +597,67 @@ class DiscordAdapter(BaseAdapter):
     def _get_config_key(self) -> str:
         return "DiscordAdapter"
 
-    def _load_accounts(self) -> dict:
-        from ErisPulse.Core.config import config as config_mgr
-        from ErisPulse.runtime.config_schema import dict_to_dataclass
-
-        key = "DiscordAdapter.accounts"
-        data = config_mgr.getConfig(key)
-
-        if not data:
-            self.logger.info(i18n.t("discord.no_config_create_default", default="未找到配置文件，创建默认账户配置"))
-            default_config = {
-                "default": {
-                    "token": "",
-                    "intents": DEFAULT_INTENTS,
-                    "enabled": True,
-                }
-            }
-            try:
-                config_mgr.setConfig(key, default_config)
-            except Exception as e:
-                self.logger.error(i18n.t("discord.save_default_failed", error=str(e), default="保存默认账户配置失败: {error}"))
-            data = default_config
-
-        accounts = {}
-        for name, account_data in data.items():
-            if not isinstance(account_data, dict):
-                continue
-            if not account_data.get("token"):
-                self.logger.error(i18n.t("discord.missing_token", name=name, default="Bot {name} 缺少token配置，已跳过"))
-                continue
-
-            instance = dict_to_dataclass(DiscordAccountConfig, account_data)
-            instance.name = name
-            accounts[name] = instance
-
-        self.logger.info(i18n.t("discord.accounts_loaded", count=len(accounts), default="Discord适配器初始化完成，共加载 {count} 个机器人"))
-        return accounts
+    # 账户加载使用框架默认实现（AccountConfigClass 模板 + 校验）；
+    # 空 token 账户在 start() 中跳过。
 
     # ==================== REST API ====================
+
+    @staticmethod
+    def _build_discord_components(rows) -> Optional[list]:
+        """通用 keyboard rows → Discord components（action row + buttons）
+
+        按钮映射：callback → style:1 + custom_id；link → style:5 + url
+        """
+        if not rows:
+            return None
+        components = []
+        try:
+            for row in rows:
+                buttons = []
+                for b in row or []:
+                    if not isinstance(b, dict):
+                        continue
+                    label = b.get("label", "")
+                    if b.get("type") == "link":
+                        buttons.append({
+                            "type": 2, "style": 5, "label": label,
+                            "url": b.get("data", ""),
+                        })
+                    else:
+                        buttons.append({
+                            "type": 2, "style": 1, "label": label,
+                            "custom_id": b.get("data", ""),
+                        })
+                if buttons:
+                    components.append({"type": 1, "components": buttons})
+        except (TypeError, AttributeError):
+            return None
+        return components or None
+
+    def _register_outbound_message(self, result: dict, channel_id: str):
+        """登记出站消息 message_id → channel_id（供 delete_message 使用）"""
+        if isinstance(result, dict) and result.get("status") == "ok" and result.get("message_id"):
+            self._message_targets[result["message_id"]] = str(channel_id)
+            while len(self._message_targets) > 800:
+                self._message_targets.pop(next(iter(self._message_targets)), None)
+
+    def _store_event_msg_id(self, event: dict, channel_id: str):
+        """登记入站消息 message_id → channel_id"""
+        msg_id = str(event.get("message_id", ""))
+        if msg_id and channel_id:
+            self._message_targets[msg_id] = str(channel_id)
+            while len(self._message_targets) > 800:
+                self._message_targets.pop(next(iter(self._message_targets)), None)
+
+    async def _delete_message_by_id(self, message_id: str, account_id: Optional[str] = None) -> dict:
+        """按消息登记表撤回消息（Discord 需要 channel_id + message_id）"""
+        channel_id = self._message_targets.get(message_id)
+        if not channel_id:
+            return self.make_error(retcode=34001, message=f"未找到消息 {message_id} 的目标上下文，无法撤回")
+        return await self.call_api(
+            f"/channels/{channel_id}/messages/{message_id}",
+            _account_id=account_id, method="DELETE",
+        )
 
     async def call_api(
         self,
@@ -522,6 +763,7 @@ class DiscordAdapter(BaseAdapter):
         content_parts = []
         embeds = []
         files = []
+        components = None
 
         for seg in segments:
             seg_type = seg.get("type", "")
@@ -529,6 +771,9 @@ class DiscordAdapter(BaseAdapter):
 
             if seg_type == "text":
                 content_parts.append(data.get("text", ""))
+            elif seg_type == "keyboard":
+                # 标准 keyboard 段（跨平台交互组件标准）→ Discord components
+                components = self._build_discord_components(data.get("rows", []))
             elif seg_type == "discord_embed":
                 embed = data.get("embed")
                 if embed:
@@ -557,6 +802,8 @@ class DiscordAdapter(BaseAdapter):
             payload["content"] = "".join(content_parts)
         if embeds:
             payload["embeds"] = embeds
+        if components:
+            payload["components"] = components
         if reply_message_id is not None:
             payload["message_reference"] = {"message_id": str(reply_message_id)}
 
@@ -569,16 +816,20 @@ class DiscordAdapter(BaseAdapter):
         )
 
         if files:
-            return await self._send_with_attachments(
+            result = await self._send_with_attachments(
                 account_id, channel_id, payload, files
             )
+            self._register_outbound_message(result, channel_id)
+            return result
         else:
-            return await self.call_api(
+            result = await self.call_api(
                 endpoint=f"/channels/{channel_id}/messages",
                 _account_id=account_id,
                 method="POST",
                 _json=payload,
             )
+            self._register_outbound_message(result, channel_id)
+            return result
 
     async def _send_with_attachments(
         self, account_id: str, channel_id: str, payload: dict, files: list
@@ -647,6 +898,10 @@ class DiscordAdapter(BaseAdapter):
         self._accounts_data = self.accounts
 
         for account_name, account in self.enabled_accounts.items():
+            if not account.token:
+                self.logger.warning(i18n.t("discord.missing_token", name=account_name, default="Bot {name} 缺少token配置，已跳过"))
+                continue
+
             converter = DiscordConverter()
             self._converters[account_name] = converter
 
@@ -659,8 +914,10 @@ class DiscordAdapter(BaseAdapter):
                 "heartbeat_ack": True,
             }
 
-            self._connect_tasks[account_name] = asyncio.create_task(
-                self._connect_account(account_name)
+            coro = self._connect_account(account_name)
+            # 生命周期任务使用 spawn_background（owner 归属，shutdown 自动回收）
+            self._connect_tasks[account_name] = (
+                spawn_background(coro) if spawn_background is not None else asyncio.create_task(coro)
             )
             self.logger.info(i18n.t("discord.account_starting", name=account_name, default="启动 Discord 账户: {name}"))
 
@@ -958,6 +1215,13 @@ class DiscordAdapter(BaseAdapter):
 
         onebot_event = converter.convert(data, event_name)
         if onebot_event:
+            if onebot_event.get("type") == "message":
+                channel_id = str(
+                    onebot_event.get("channel_id")
+                    or onebot_event.get("group_id")
+                    or onebot_event.get("user_id", "")
+                )
+                self._store_event_msg_id(onebot_event, channel_id)
             from ErisPulse.Core import adapter as adapter_mgr
 
             await adapter_mgr.emit(onebot_event)

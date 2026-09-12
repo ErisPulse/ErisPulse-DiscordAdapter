@@ -3,6 +3,8 @@ import re
 import time
 from typing import Dict, List, Optional
 
+from ErisPulse.Core.Bases import BaseConverter
+
 # Discord mention patterns
 _MENTION_USER = re.compile(r"<@!?(\d+)>")
 _MENTION_ROLE = re.compile(r"<@&(\d+)>")
@@ -10,18 +12,25 @@ _MENTION_CHANNEL = re.compile(r"<#(\d+)>")
 _MENTION_ALL = re.compile(r"<@&?(\d+)>|<#(\d+)>")
 
 
-class DiscordConverter:
+class DiscordConverter(BaseConverter):
     """
     Discord 事件转换器
 
     将 Discord Gateway Dispatch 事件转换为 ErisPulse OneBot12 标准格式。
 
-    核心原则：
-    1. 严格兼容：所有标准字段遵循 OneBot12 规范
+    继承 BaseConverter，公共字段（id/time/platform/self/discord_raw）由
+    build_base_event 构建后按 Discord 语义覆盖。
+
+    设计原则
+    1. 严格兼容：标准字段严格遵循 OneBot12 规范
     2. 明确扩展：平台特有功能使用 discord_ 前缀
     3. 数据完整：原始事件数据保留在 discord_raw 字段
     4. 时间统一：所有时间戳转换为 10 位 Unix 时间戳（秒级）
     """
+
+    def __init__(self):
+        super().__init__(platform="discord")
+        self.bot_id = ""
 
     # 消息类事件
     MESSAGE_EVENTS = {
@@ -67,9 +76,6 @@ class DiscordConverter:
         "MESSAGE_REACTION_REMOVE": "group_message_reaction_remove",
     }
 
-    def __init__(self):
-        self.bot_id = ""
-
     def convert(self, raw_data: Dict, event_name: str) -> Optional[Dict]:
         """
         将 Discord Dispatch 事件转换为 OneBot12 标准格式
@@ -98,19 +104,14 @@ class DiscordConverter:
     def _create_base_event(
         self, raw_data: Dict, event_name: str, event_type: str, detail_type: str
     ) -> Dict:
-        return {
-            "id": self._generate_id(raw_data, event_name),
-            "time": self._extract_time(raw_data),
-            "type": event_type,
-            "detail_type": detail_type,
-            "platform": "discord",
-            "self": {
-                "platform": "discord",
-                "user_id": self.bot_id,
-            },
-            "discord_raw": raw_data,
-            "discord_raw_type": event_name,
-        }
+        """基础事件结构（BaseConverter 骨架 + Discord 语义覆盖）"""
+        base = self.build_base_event(raw_data, event_name)
+        base["id"] = self._generate_id(raw_data, event_name)
+        base["time"] = self._extract_time(raw_data)
+        base["type"] = event_type
+        base["detail_type"] = detail_type
+        base["self"]["user_id"] = self.bot_id
+        return base
 
     def _map_event_type(self, event_name: str, raw_data: Dict) -> tuple:
         if event_name in self.MESSAGE_EVENTS:
@@ -367,6 +368,13 @@ class DiscordConverter:
             base["discord_guild_id"] = str(guild_id)
             base["group_id"] = channel_id
         base["discord_interaction"] = raw_data
+        # 跨平台交互组件标准字段（见 docs/zh-CN/standards/standardization-guide.md §5.3）
+        base["interaction_id"] = str(raw_data.get("id", ""))
+        interaction_data = raw_data.get("data", {}) or {}
+        base["button_data"] = str(interaction_data.get("custom_id", ""))
+        message_ref = raw_data.get("message", {})
+        if message_ref.get("id"):
+            base["message_id"] = str(message_ref.get("id", ""))
         return base
 
     # ==================== 消息内容解析 ====================
