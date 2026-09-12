@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "ErisPulse-DiscordAdapter"
 version = "4.2.0"
 description = "ErisPulse的Discord适配模块"
