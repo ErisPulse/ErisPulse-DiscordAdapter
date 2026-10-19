@@ -13,12 +13,74 @@ from ErisPulse.Core.i18n import i18n
 
 from .Converter import DiscordConverter
 
+
+def _forward_node_text(node: Dict) -> str:
+    """提取合并转发节点 content 中全部 text 段文本（段间直接连接）"""
+    data = node.get("data") or {}
+    return "".join(
+        str(seg.get("data", {}).get("text") or "")
+        for seg in (data.get("content") or [])
+        if isinstance(seg, dict) and seg.get("type") == "text"
+    )
+
+
+def _forward_nodes_plain(nodes, separator: str = "\n") -> str:
+    """合并转发节点降级纯文本：每条「昵称: 正文」"""
+    lines = []
+    for node in nodes if isinstance(nodes, list) else [nodes]:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") or {}
+        nickname = str(data.get("nickname") or "").strip()
+        text = _forward_node_text(node).strip()
+        if nickname and text:
+            lines.append(f"{nickname}: {text}")
+        elif text:
+            lines.append(text)
+    return separator.join(lines)
+
+
+def _build_forward_discord_embed(
+    nodes, title: str = "合并聊天记录", max_fields: int = 25
+):
+    """渲染合并转发为 Discord Embed（title + 每条消息一个 field）
+
+    Discord 限制：field name ≤256、value ≤1024、单 embed 最多 25 个 field
+    """
+    fields = []
+    remaining = 0
+    for node in nodes if isinstance(nodes, list) else [nodes]:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") or {}
+        nickname = str(data.get("nickname") or "").strip() or " "
+        text = _forward_node_text(node).strip()
+        if not text:
+            continue
+        if len(fields) >= max_fields:
+            remaining += 1
+            continue
+        fields.append({
+            "name": nickname[:256],
+            "value": text[:1024],
+            "inline": False,
+        })
+    if not fields:
+        return None
+    if remaining:
+        fields.append({
+            "name": "…",
+            "value": f"还有 {remaining} 条消息未展示",
+            "inline": False,
+        })
+    return {"title": title[:256], "fields": fields}
+
 try:
     from ErisPulse.runtime.tasks import spawn_background
 except ImportError:  # pragma: no cover
     spawn_background = None
 
-__version__ = "4.2.0"
+__version__ = "4.3.0"
 
 # 软依赖的框架最低版本（运行时检测，仅提示不强制）
 MIN_FRAMEWORK_VERSION = (2, 7, 1)
@@ -301,6 +363,35 @@ class DiscordAdapter(BaseAdapter):
                     [{"type": "discord_embed", "data": {"embed": e}} for e in embeds]
                 )
 
+        def MergeForward(self, nodes, title: str = "合并聊天记录"):
+            """发送合并转发消息（Discord Embed：标题 + 每条消息一个 field）
+
+            :param nodes: go-cqhttp 扩展的 OneBot v11 合并转发节点数组（或单节点 dict）
+            :param title: Embed 标题
+            :return: asyncio.Task
+            """
+            if isinstance(nodes, dict):
+                nodes = [nodes]
+            return asyncio.create_task(
+                self._do_send_merge_forward(
+                    [n for n in nodes if isinstance(n, dict)], title
+                )
+            )
+
+        async def _do_send_merge_forward(self, nodes, title: str = "合并聊天记录"):
+            embed = _build_forward_discord_embed(nodes, title)
+            if not embed:
+                return self._adapter.make_error(
+                    retcode=10006, message="MergeForward: 节点无有效文本内容"
+                )
+            ctx = self.send_context
+            return await self._adapter._send_segments(
+                ctx.get("account_id"),
+                ctx["target_type"],
+                ctx["target_id"],
+                [{"type": "discord_embed", "data": {"embed": embed}}],
+            )
+
         def Image(
             self,
             file: Union[str, bytes],
@@ -402,6 +493,20 @@ class DiscordAdapter(BaseAdapter):
                     {"type": "keyboard", "data": {"rows": self._keyboard_rows}}
                 ]
                 self._keyboard_rows = None
+
+            # node 段解析：纯 node 列表自动路由合并转发 Embed；混合列表降级为纯文本
+            if message and all(
+                isinstance(seg, dict) and seg.get("type") == "node" for seg in message
+            ):
+                return asyncio.create_task(
+                    self._do_send_merge_forward([seg for seg in message])
+                )
+            message = [
+                {"type": "text", "data": {"text": _forward_nodes_plain(seg)}}
+                if isinstance(seg, dict) and seg.get("type") == "node"
+                else seg
+                for seg in message
+            ]
 
             ctx = self.send_context
 
