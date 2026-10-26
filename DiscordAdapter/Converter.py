@@ -519,7 +519,13 @@ class DiscordConverter(BaseConverter):
             if t == "text":
                 parts.append(d.get("text", ""))
             elif t == "mention":
-                parts.append(f"@{d.get('user_nickname', d.get('user_id', ''))}")
+                # 昵称缺失回退 user_id，两者皆缺省略该段（不输出空 "@"）
+                nickname = str(d.get("user_nickname") or "").strip()
+                user_id = str(d.get("user_id") or "").strip()
+                if nickname:
+                    parts.append(f"@{nickname}")
+                elif user_id:
+                    parts.append(f"@{user_id}")
             elif t == "mention_all":
                 parts.append("@everyone")
             elif t == "discord_role_mention":
