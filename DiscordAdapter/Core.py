@@ -80,7 +80,7 @@ try:
 except ImportError:  # pragma: no cover
     spawn_background = None
 
-__version__ = "4.3.1"
+__version__ = "4.4.0"
 
 # 软依赖的框架最低版本（运行时检测，仅提示不强制）
 MIN_FRAMEWORK_VERSION = (2, 7, 1)
@@ -107,6 +107,30 @@ OP_HEARTBEAT_ACK = 11
 API_BASE = "https://discord.com/api/v10"
 
 
+# Gateway Intents 选项（面板多选展示，value 为位序号）
+INTENT_OPTIONS = [
+    {"label": "0 GUILDS 频道基础", "value": 0},
+    {"label": "1 GUILD_MEMBERS 频道成员 ⚠特权", "value": 1},
+    {"label": "2 GUILD_MODERATION 审核日志", "value": 2},
+    {"label": "3 GUILD_EMOJIS_AND_STICKERS 表情与贴纸", "value": 3},
+    {"label": "4 GUILD_INTEGRATIONS 集成", "value": 4},
+    {"label": "5 GUILD_WEBHOOKS Webhook", "value": 5},
+    {"label": "6 GUILD_INVITES 邀请", "value": 6},
+    {"label": "7 GUILD_VOICE_STATES 语音状态", "value": 7},
+    {"label": "8 GUILD_PRESENCES 成员状态 ⚠特权", "value": 8},
+    {"label": "9 GUILD_MESSAGES 频道消息", "value": 9},
+    {"label": "10 GUILD_MESSAGE_REACTIONS 消息表态", "value": 10},
+    {"label": "11 GUILD_MESSAGE_TYPING 正在输入", "value": 11},
+    {"label": "12 DIRECT_MESSAGES 私信", "value": 12},
+    {"label": "13 DIRECT_MESSAGE_REACTIONS 私信表态", "value": 13},
+    {"label": "14 DIRECT_MESSAGE_TYPING 私信输入", "value": 14},
+    {"label": "15 MESSAGE_CONTENT 消息内容 ⚠特权", "value": 15},
+    {"label": "16 GUILD_SCHEDULED_EVENTS 日程事件", "value": 16},
+    {"label": "20 GUILD_AUTO_MODERATION_CONFIGURATION 自动审核配置", "value": 20},
+    {"label": "21 GUILD_AUTO_MODERATION_EXECUTION 自动审核执行", "value": 21},
+]
+
+
 @dataclass
 class DiscordAccountConfig(BotAccountConfig):
     token: str = field(
@@ -128,10 +152,17 @@ class DiscordAccountConfig(BotAccountConfig):
         metadata={
             "description": {
                 "i18n": "discord.intents",
-                "default": "Gateway Intents 位掩码（默认 GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281）",
+                "default": "Gateway Intents（默认 GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT = 33281；"
+                "带 ⚠ 的需在开发者后台开启特权意图）",
             },
             "required": False,
-            "ui": {"widget": "number", "group": "advanced", "order": 3},
+            "ui": {
+                "widget": "multiselect",
+                "value_type": "mask",
+                "group": "advanced",
+                "order": 3,
+                "options": INTENT_OPTIONS,
+            },
         },
     )
 
