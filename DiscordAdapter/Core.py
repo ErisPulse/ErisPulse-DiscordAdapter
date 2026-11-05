@@ -1,8 +1,12 @@
 import asyncio
+import base64
 import json
+import os
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 from ErisPulse.Core import client
 from ErisPulse.Core.Bases.adapter import BaseAdapter
@@ -12,6 +16,68 @@ from ErisPulse.Core.Event import register_event_mixin, unregister_platform_event
 from ErisPulse.Core.i18n import i18n
 
 from .Converter import DiscordConverter
+
+
+# 常见媒体格式的魔数前缀
+_MEDIA_MAGIC_PREFIXES = (
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF87a",
+    b"GIF89a",
+    b"OggS",
+    b"fLaC",
+    b"ID3",
+    b"RIFF",
+    b"%PDF",
+    b"PK\x03\x04",
+    b"\x1a\x45\xdf\xa3",
+)
+
+
+def _looks_like_media_bytes(data: bytes) -> bool:
+    """按魔数判断 bytes 是否为常见媒体/文件格式"""
+    if any(data.startswith(prefix) for prefix in _MEDIA_MAGIC_PREFIXES):
+        return True
+    if len(data) > 12 and data[4:8] == b"ftyp":
+        return True
+    return len(data) > 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0
+
+
+def _decode_base64_media(value: str) -> Optional[bytes]:
+    """标准 base64 字符串解码为 bytes（解码结果须通过魔数校验）；不满足返回 None"""
+    if not value or value.strip() != value:
+        return None
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except Exception:
+        return None
+    return decoded if _looks_like_media_bytes(decoded) else None
+
+
+def _decode_data_uri(value: str) -> Optional[bytes]:
+    """data: URI 解码为 bytes；格式不合法或解码失败返回 None"""
+    head, sep, payload = value.partition(",")
+    if not sep or not head.startswith("data:"):
+        return None
+    if head.endswith(";base64"):
+        try:
+            return base64.b64decode(payload, validate=True)
+        except Exception:
+            return None
+    return unquote(payload).encode("utf-8")
+
+
+def _file_url_to_path(value: str) -> str:
+    """file:// URL 剥前缀并转换为本地路径；其余字符串原样返回"""
+    if value.startswith("file://"):
+        return url2pathname(urlparse(value).path)
+    return value
+
+
+def _url_basename(url: str) -> Optional[str]:
+    """URL path 末段作为文件名（unquote，天然剥去 query）；为空返回 None"""
+    name = os.path.basename(unquote(urlparse(url).path))
+    return name or None
 
 
 def _forward_node_text(node: Dict) -> str:
@@ -80,7 +146,7 @@ try:
 except ImportError:  # pragma: no cover
     spawn_background = None
 
-__version__ = "4.4.0"
+__version__ = "4.4.1"
 
 # 软依赖的框架最低版本（运行时检测，仅提示不强制）
 MIN_FRAMEWORK_VERSION = (2, 7, 1)
@@ -445,24 +511,10 @@ class DiscordAdapter(BaseAdapter):
                 return self.Embed(embed)
 
         def File(self, file: Union[str, bytes], filename: str = ""):
-            if isinstance(file, bytes):
-                return self.Raw_ob12(
-                    [
-                        {
-                            "type": "file",
-                            "data": {"file": file, "file_name": filename or "file"},
-                        },
-                    ]
-                )
-            else:
-                return self.Raw_ob12(
-                    [
-                        {
-                            "type": "file",
-                            "data": {"file": file, "file_name": filename or "file"},
-                        },
-                    ]
-                )
+            data = {"file": file}
+            if filename:
+                data["file_name"] = filename
+            return self.Raw_ob12([{"type": "file", "data": data}])
 
         def Reply(
             self,
@@ -900,6 +952,7 @@ class DiscordAdapter(BaseAdapter):
         embeds = []
         files = []
         components = None
+        skipped_media = []
 
         for seg in segments:
             seg_type = seg.get("type", "")
@@ -916,15 +969,31 @@ class DiscordAdapter(BaseAdapter):
                     embeds.append(embed)
             elif seg_type in ("image", "file", "video", "audio"):
                 file_data = data.get("file")
+                resolved_bytes = None
+                derived_name = None
                 if isinstance(file_data, bytes):
-                    files.append(
-                        (
-                            data.get("file_name", seg_type),
-                            file_data,
-                        )
-                    )
+                    resolved_bytes = file_data
                 elif isinstance(file_data, str) and file_data:
-                    content_parts.append(file_data)
+                    if seg_type == "image" and file_data.startswith(("http://", "https://")):
+                        # image 段 URL 保持 Embed 外链形态
+                        embed = {"image": {"url": file_data}}
+                        if data.get("caption"):
+                            embed["description"] = data["caption"]
+                        embeds.append(embed)
+                        continue
+                    resolved_bytes, derived_name = await self._resolve_media_bytes(file_data)
+                    if resolved_bytes is None:
+                        skipped_media.append(seg_type)
+                        continue
+                if resolved_bytes is None:
+                    continue
+                filename = (
+                    data.get("filename")
+                    or data.get("file_name")
+                    or derived_name
+                    or self._default_media_name(seg_type, resolved_bytes or b"")
+                )
+                files.append((filename, resolved_bytes))
             elif seg_type == "mention":
                 content_parts.append(f"<@{data.get('user_id', '')}>")
             elif seg_type == "mention_all":
@@ -932,6 +1001,8 @@ class DiscordAdapter(BaseAdapter):
             elif seg_type == "reply":
                 if reply_message_id is None:
                     reply_message_id = data.get("message_id")
+            else:
+                self.logger.warning(f"未处理的消息段类型，已跳过: {seg_type}")
 
         payload = {}
         if content_parts:
@@ -955,8 +1026,6 @@ class DiscordAdapter(BaseAdapter):
             result = await self._send_with_attachments(
                 account_id, channel_id, payload, files
             )
-            self._register_outbound_message(result, channel_id)
-            return result
         else:
             result = await self.call_api(
                 endpoint=f"/channels/{channel_id}/messages",
@@ -964,8 +1033,57 @@ class DiscordAdapter(BaseAdapter):
                 method="POST",
                 _json=payload,
             )
-            self._register_outbound_message(result, channel_id)
-            return result
+        self._register_outbound_message(result, channel_id)
+        if skipped_media:
+            note = f"[跳过无法解析的媒体段: {', '.join(skipped_media)}]"
+            result["message"] = ((result.get("message") or "") + " " + note).strip()
+        return result
+
+    async def _resolve_media_bytes(self, value: str) -> Tuple[Optional[bytes], Optional[str]]:
+        """字符串媒体形态分类解析为 bytes：http(s) 下载；file:// 剥前缀；本地路径读取；data:/base64 解码。
+
+        返回 (bytes, 文件名提示)；解析失败记录 warning 并返回 (None, None)。
+        """
+        if value.startswith(("http://", "https://")):
+            try:
+                resp = await client.get(value)
+                if resp.status != 200:
+                    self.logger.warning(f"媒体下载失败(HTTP {resp.status})，跳过段: {value[:200]}")
+                    return None, None
+                return await resp.read(), _url_basename(value)
+            except Exception as e:
+                self.logger.warning(f"媒体下载失败，跳过段: {e}")
+                return None, None
+        local = _file_url_to_path(value)
+        if os.path.isfile(local):
+            try:
+                with open(local, "rb") as f:
+                    return f.read(), os.path.basename(local)
+            except OSError as e:
+                self.logger.warning(f"媒体文件读取失败，跳过段: {e}")
+                return None, None
+        if value.startswith("data:"):
+            decoded = _decode_data_uri(value)
+            if decoded is None:
+                self.logger.warning("data: URI 解码失败，跳过段")
+                return None, None
+            return decoded, None
+        decoded = _decode_base64_media(value)
+        if decoded is not None:
+            return decoded, None
+        self.logger.warning(f"无法解析的媒体地址，跳过段: {value[:200]}")
+        return None, None
+
+    @staticmethod
+    def _default_media_name(seg_type: str, data: bytes) -> str:
+        """按段类型与 bytes 魔数生成默认文件名（真实扩展名）"""
+        if seg_type == "image":
+            return "image.jpg" if data.startswith(b"\xff\xd8\xff") else "image.png"
+        return {
+            "video": "video.mp4",
+            "audio": "audio.mp3",
+            "file": "file.bin",
+        }.get(seg_type, "file.bin")
 
     async def _send_with_attachments(
         self, account_id: str, channel_id: str, payload: dict, files: list
